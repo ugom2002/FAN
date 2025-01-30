@@ -8,7 +8,7 @@ from math import sqrt
 from utils.masking import TriangularCausalMask, ProbMask
 from reformer_pytorch import LSHSelfAttention
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from FANLayer import FANLayer
+from layers import FANLayer
 
 
 
