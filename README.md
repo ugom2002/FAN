@@ -1,1 +1,1 @@
-# FAN
+# FAN vs MLP
