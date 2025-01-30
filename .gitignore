@@ -170,3 +170,4 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 ETTh1.csv
+checkpoints/test_run/checkpoint.pth
