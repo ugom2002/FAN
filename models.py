@@ -5,19 +5,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 ####################################
-# Définition de la couche FANLayer
+# Definition of the FAN Layer
 ####################################
 class FANLayer(nn.Module):
     """
-    Couche FAN (Fourier Analysis Network)
+    Fourier Analysis Network (FAN) Layer
     """
     def __init__(self, input_dim, output_dim, p_ratio=0.25, activation='gelu', use_p_bias=True):
         super(FANLayer, self).__init__()
-        # p_ratio doit être dans (0, 0.5)
+        # p_ratio must be between 0 and 0.5
         assert 0 < p_ratio < 0.5, "p_ratio must be between 0 and 0.5"
         self.p_ratio = p_ratio
         p_output_dim = int(output_dim * self.p_ratio)
-        # La branche p génère cos et sin donc on compte deux fois
+        # The periodic branch generates both cos and sin, so it's counted twice
         g_output_dim = output_dim - 2 * p_output_dim
         self.input_linear_p = nn.Linear(input_dim, p_output_dim, bias=use_p_bias)
         self.input_linear_g = nn.Linear(input_dim, g_output_dim)
@@ -30,15 +30,15 @@ class FANLayer(nn.Module):
         # src: (batch, d_model)
         g = self.activation(self.input_linear_g(src))
         p = self.input_linear_p(src)
-        # Concaténation de cosinus, sinus et de la branche g
+        # Concatenation of cosine, sine, and the non-periodic branch
         output = torch.cat((torch.cos(p), torch.sin(p), g), dim=-1)
         return output
 
 ####################################
-# Blocs Transformer
+# Transformer Blocks
 ####################################
 
-# Bloc Transformer avec FFN classique
+# Transformer block with a standard Feedforward Neural Network (FFN)
 class TransformerBlock(nn.Module):
     def __init__(self, d_model, nhead, d_ff, dropout=0.1):
         super(TransformerBlock, self).__init__()
@@ -62,12 +62,11 @@ class TransformerBlock(nn.Module):
         src = self.norm2(src)
         return src
 
-# Bloc Transformer avec une couche FAN en remplacement du FFN
+# Transformer block with a FAN layer replacing the FFN
 class TransformerFANBlock(nn.Module):
     def __init__(self, d_model, nhead, d_ff, fan_p_ratio=0.25, dropout=0.1):
         super(TransformerFANBlock, self).__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        # La FANLayer prend en entrée des vecteurs de dimension d_model et produit un vecteur de dimension d_ff.
         self.fan_layer = FANLayer(d_model, d_ff, p_ratio=fan_p_ratio, activation='gelu')
         self.linear_out = nn.Linear(d_ff, d_model)
         self.norm1 = nn.LayerNorm(d_model)
@@ -80,8 +79,8 @@ class TransformerFANBlock(nn.Module):
         src2 = self.self_attn(src, src, src)[0]
         src = src + self.dropout1(src2)
         src = self.norm1(src)
-        # Appliquer la FANLayer token par token :
-        # on transpose pour obtenir (batch, seq_len, d_model), puis on reshape en (batch*seq_len, d_model)
+        # Apply the FANLayer token by token:
+        # transpose to get (batch, seq_len, d_model), then reshape to (batch*seq_len, d_model)
         bsz = src.size(1)
         seq_len = src.size(0)
         src_reshaped = src.transpose(0, 1).reshape(-1, src.size(2))
@@ -93,7 +92,7 @@ class TransformerFANBlock(nn.Module):
         return src
 
 ####################################
-# Encodage positionnel (Positional Encoding)
+# Positional Encoding
 ####################################
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, dropout=0.1, max_len=5000):
@@ -116,14 +115,14 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 ####################################
-# Modèle Transformer pour la prévision de séries temporelles
+# Transformer Model for Time Series Forecasting
 ####################################
 class TransformerForecast(nn.Module):
     def __init__(self, input_size, d_model, nhead, num_layers, d_ff, pred_len, dropout=0.1, use_fan=False, fan_p_ratio=0.25):
         """
-        input_size: nombre de features en entrée (par exemple 7 pour un dataset multivarié)
-        pred_len: longueur de la fenêtre de prédiction
-        Le modèle prédit pour chaque feature, donc la dimension de sortie sera input_size * pred_len.
+        input_size: number of input features (e.g., 7 for a multivariate dataset)
+        pred_len: length of the prediction window
+        The model predicts for each feature, so the output dimension will be input_size * pred_len.
         """
         super(TransformerForecast, self).__init__()
         self.input_size = input_size
@@ -137,7 +136,7 @@ class TransformerForecast(nn.Module):
                 self.layers.append(TransformerFANBlock(d_model, nhead, d_ff, fan_p_ratio, dropout))
             else:
                 self.layers.append(TransformerBlock(d_model, nhead, d_ff, dropout))
-        # La couche de décodage prédit l'ensemble des valeurs futures
+        # The decoding layer predicts all future values
         self.decoder = nn.Linear(d_model, input_size * pred_len)
     
     def forward(self, src):
@@ -147,9 +146,9 @@ class TransformerForecast(nn.Module):
         src = self.pos_encoder(src)
         for layer in self.layers:
             src = layer(src)
-        # Utilisation de la représentation du dernier pas de temps
+        # Use the representation of the last time step
         out = src[-1]  # (batch, d_model)
         out = self.decoder(out)  # (batch, input_size * pred_len)
-        # Reshape pour obtenir (batch, pred_len, input_size)
+        # Reshape to get (batch, pred_len, input_size)
         out = out.view(-1, self.pred_len, self.input_size)
         return out
