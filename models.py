@@ -67,7 +67,7 @@ class TransformerFANBlock(nn.Module):
     def __init__(self, d_model, nhead, d_ff, fan_p_ratio=0.25, dropout=0.1):
         super(TransformerFANBlock, self).__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        # Ici, la FANLayer prendra en entrée des vecteurs de dimension d_model et produira un vecteur de dimension d_ff.
+        # La FANLayer prend en entrée des vecteurs de dimension d_model et produit un vecteur de dimension d_ff.
         self.fan_layer = FANLayer(d_model, d_ff, p_ratio=fan_p_ratio, activation='gelu')
         self.linear_out = nn.Linear(d_ff, d_model)
         self.norm1 = nn.LayerNorm(d_model)
@@ -80,13 +80,13 @@ class TransformerFANBlock(nn.Module):
         src2 = self.self_attn(src, src, src)[0]
         src = src + self.dropout1(src2)
         src = self.norm1(src)
-        # Pour appliquer la FANLayer, on traite chaque vecteur (token) individuellement.
-        # On transposé pour obtenir (batch, seq_len, d_model), puis on reshape en (batch*seq_len, d_model).
+        # Appliquer la FANLayer token par token :
+        # on transpose pour obtenir (batch, seq_len, d_model), puis on reshape en (batch*seq_len, d_model)
         bsz = src.size(1)
         seq_len = src.size(0)
-        src_reshaped = src.transpose(0,1).reshape(-1, src.size(2))
+        src_reshaped = src.transpose(0, 1).reshape(-1, src.size(2))
         fan_out = self.fan_layer(src_reshaped)  # (batch*seq_len, d_ff)
-        fan_out = fan_out.reshape(bsz, seq_len, -1).transpose(0,1)  # (seq_len, batch, d_ff)
+        fan_out = fan_out.reshape(bsz, seq_len, -1).transpose(0, 1)  # (seq_len, batch, d_ff)
         fan_out = self.linear_out(fan_out)
         src = src + self.dropout2(fan_out)
         src = self.norm2(src)
@@ -104,7 +104,7 @@ class PositionalEncoding(nn.Module):
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         if d_model % 2 == 1:
-            pe[:, 1::2] = torch.cos(position * div_term[:pe[:,1::2].shape[1]])
+            pe[:, 1::2] = torch.cos(position * div_term[:pe[:, 1::2].shape[1]])
         else:
             pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(1)  # (max_len, 1, d_model)
@@ -119,13 +119,15 @@ class PositionalEncoding(nn.Module):
 # Modèle Transformer pour la prévision de séries temporelles
 ####################################
 class TransformerForecast(nn.Module):
-    def __init__(self, input_size, d_model, nhead, num_layers, d_ff, output_size, dropout=0.1, use_fan=False, fan_p_ratio=0.25):
+    def __init__(self, input_size, d_model, nhead, num_layers, d_ff, pred_len, dropout=0.1, use_fan=False, fan_p_ratio=0.25):
         """
-        input_size: nombre de features en entrée (par exemple 1 pour univarié)
-        output_size: nombre de valeurs prédites (la longueur de la fenêtre de prédiction)
-        use_fan: si True, on utilise les blocs avec FAN à la place des blocs classiques
+        input_size: nombre de features en entrée (par exemple 7 pour un dataset multivarié)
+        pred_len: longueur de la fenêtre de prédiction
+        Le modèle prédit pour chaque feature, donc la dimension de sortie sera input_size * pred_len.
         """
         super(TransformerForecast, self).__init__()
+        self.input_size = input_size
+        self.pred_len = pred_len
         self.input_linear = nn.Linear(input_size, d_model)
         self.pos_encoder = PositionalEncoding(d_model, dropout)
         self.use_fan = use_fan
@@ -135,16 +137,19 @@ class TransformerForecast(nn.Module):
                 self.layers.append(TransformerFANBlock(d_model, nhead, d_ff, fan_p_ratio, dropout))
             else:
                 self.layers.append(TransformerBlock(d_model, nhead, d_ff, dropout))
-        self.decoder = nn.Linear(d_model, output_size)
+        # La couche de décodage prédit l'ensemble des valeurs futures
+        self.decoder = nn.Linear(d_model, input_size * pred_len)
     
     def forward(self, src):
         # src: (batch, seq_len, input_size)
         src = self.input_linear(src)  # (batch, seq_len, d_model)
-        src = src.transpose(0,1)  # (seq_len, batch, d_model)
+        src = src.transpose(0, 1)  # (seq_len, batch, d_model)
         src = self.pos_encoder(src)
         for layer in self.layers:
             src = layer(src)
         # Utilisation de la représentation du dernier pas de temps
         out = src[-1]  # (batch, d_model)
-        out = self.decoder(out)  # (batch, output_size)
+        out = self.decoder(out)  # (batch, input_size * pred_len)
+        # Reshape pour obtenir (batch, pred_len, input_size)
+        out = out.view(-1, self.pred_len, self.input_size)
         return out
